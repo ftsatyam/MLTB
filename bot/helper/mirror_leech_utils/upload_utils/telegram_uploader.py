@@ -1,6 +1,8 @@
 from PIL import Image
 from aioshutil import rmtree
 from asyncio import sleep
+from hashlib import md5
+from json import loads
 from logging import getLogger
 from natsort import natsorted
 from os import walk, path as ospath
@@ -28,8 +30,13 @@ from tenacity import (
 from .... import intervals
 from ....core.config_manager import Config
 from ....core.telegram_manager import TgClient
-from ...ext_utils.bot_utils import sync_to_async
-from ...ext_utils.files_utils import is_archive, get_base_name
+from ...ext_utils.bot_utils import cmd_exec, sync_to_async
+from ...ext_utils.caption_utils import (
+    caption_template_fields,
+    render_caption_template,
+)
+from ...ext_utils.files_utils import get_mime_type, is_archive, get_base_name
+from ...ext_utils.status_utils import get_readable_file_size, get_readable_time
 from ...telegram_helper.message_utils import delete_message
 from ...ext_utils.media_utils import (
     get_media_info,
@@ -40,6 +47,14 @@ from ...ext_utils.media_utils import (
 )
 
 LOGGER = getLogger(__name__)
+
+
+def _get_md5(file_path):
+    digest = md5()
+    with open(file_path, "rb") as file_obj:
+        for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class TelegramUploader:
@@ -57,6 +72,7 @@ class TelegramUploader:
         self._last_msg_in_group = False
         self._up_path = ""
         self._lprefix = ""
+        self._lcaption = ""
         self._media_group = False
         self._is_private = False
         self._sent_msg = None
@@ -86,6 +102,7 @@ class TelegramUploader:
             if "LEECH_FILENAME_PREFIX" not in self._listener.user_dict
             else ""
         )
+        self._lcaption = self._listener.user_dict.get("LEECH_CAPTIONS") or ""
         if self._thumb != "none" and not await aiopath.exists(self._thumb):
             self._thumb = None
         self._files_links = self._listener.user_dict.get("FILES_LINKS", False) or (
@@ -165,6 +182,88 @@ class TelegramUploader:
             await rename(self._up_path, new_path)
             self._up_path = new_path
         return cap_mono
+
+    async def _render_leech_caption(self, template, file_, precaption, size):
+        fields = caption_template_fields(template)
+        values = {
+            "filename": ospath.basename(self._up_path),
+            "size": get_readable_file_size(size),
+            "duration": "",
+            "quality": "",
+            "languages": "",
+            "subtitles": "",
+            "md5_hash": "",
+            "mime_type": "",
+            "prefilename": file_,
+            "precaption": precaption,
+        }
+
+        if fields.intersection({"duration", "quality", "languages", "subtitles"}):
+            try:
+                result = await cmd_exec(
+                    [
+                        "ffprobe",
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-print_format",
+                        "json",
+                        "-show_format",
+                        "-show_streams",
+                        self._up_path,
+                    ]
+                )
+                if result[0] and result[2] == 0:
+                    probe = loads(result[0])
+                    media_format = probe.get("format", {})
+                    duration = round(float(media_format.get("duration", 0)))
+                    if duration:
+                        values["duration"] = get_readable_time(duration) or "0s"
+                    streams = probe.get("streams", [])
+                    heights = [
+                        int(stream["height"])
+                        for stream in streams
+                        if stream.get("codec_type") == "video"
+                        and str(stream.get("height", "")).isdigit()
+                    ]
+                    if heights:
+                        values["quality"] = f"{max(heights)}p"
+                    for stream_type, field in (
+                        ("audio", "languages"),
+                        ("subtitle", "subtitles"),
+                    ):
+                        labels = []
+                        for stream in streams:
+                            if stream.get("codec_type") != stream_type:
+                                continue
+                            tags = stream.get("tags", {})
+                            label = (
+                                tags.get("language")
+                                or tags.get("LANGUAGE")
+                                or tags.get("title")
+                                or tags.get("TITLE")
+                            )
+                            if label and label not in labels:
+                                labels.append(label)
+                        values[field] = ", ".join(labels)
+            except Exception as error:
+                LOGGER.info(f"Could not read caption media metadata: {error}")
+
+        if "mime_type" in fields:
+            try:
+                values["mime_type"] = await sync_to_async(
+                    get_mime_type, self._up_path
+                )
+            except Exception as error:
+                LOGGER.info(f"Could not read caption MIME type: {error}")
+
+        if "md5_hash" in fields:
+            try:
+                values["md5_hash"] = await sync_to_async(_get_md5, self._up_path)
+            except Exception as error:
+                LOGGER.info(f"Could not calculate caption MD5: {error}")
+
+        return render_caption_template(template, values)
 
     def _get_input_media(self, subkey, key):
         rlist = []
@@ -256,6 +355,10 @@ class TelegramUploader:
                     if self._listener.is_cancelled:
                         return
                     cap_mono = await self._prepare_file(file_, dirpath)
+                    if self._lcaption:
+                        cap_mono = await self._render_leech_caption(
+                            self._lcaption, file_, cap_mono, f_size
+                        )
                     if self._last_msg_in_group:
                         group_lists = [
                             x for v in self._media_dict.values() for x in v.keys()

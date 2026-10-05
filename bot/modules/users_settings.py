@@ -41,6 +41,7 @@ leech_options = [
     "LEECH_SPLIT_SIZE",
     "LEECH_DUMP_CHAT",
     "LEECH_FILENAME_PREFIX",
+    "LEECH_CAPTIONS",
     "THUMBNAIL_LAYOUT",
     "CLONE_DUMP_CHATS",
 ]
@@ -86,6 +87,12 @@ async def get_user_settings(from_user, stype="main"):
             lprefix = Config.LEECH_FILENAME_PREFIX
         else:
             lprefix = "None"
+        buttons.data_button(
+            "Leech Captions", f"userset {user_id} menu LEECH_CAPTIONS"
+        )
+        leech_caption = user_dict.get("LEECH_CAPTIONS") or "None"
+        if len(leech_caption) > 200:
+            leech_caption = f"{leech_caption[:197]}..."
         if (
             user_dict.get("AS_DOCUMENT", False)
             or "AS_DOCUMENT" not in user_dict
@@ -205,6 +212,7 @@ Leech Split Size is <b>{split_size}</b>
 Equal Splits is <b>{equal_splits}</b>
 Media Group is <b>{media_group}</b>
 Leech Prefix is <code>{escape(lprefix)}</code>
+Leech Captions is <code>{escape(leech_caption)}</code>
 Leech Destination is <code>{leech_dest}</code>
 Clone Dump Chats is <code>{cdc}</code>
 Leech by <b>{leech_method}</b> session
