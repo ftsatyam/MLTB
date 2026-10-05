@@ -1,15 +1,12 @@
-"""Helpers for rendering per-user Telegram leech caption templates."""
-
 import re
 
 
-_ESCAPED = {"|": "\ue000", "{": "\ue001", "}": "\ue002"}
-_RESTORE_ESCAPED = {value: key for key, value in _ESCAPED.items()}
-_VARIABLE = re.compile(r"\{([a-z_]+)\}")
+ESCAPED = {"|": "\ue000", "{": "\ue001", "}": "\ue002"}
+RESTORED = {value: key for key, value in ESCAPED.items()}
+VARIABLE = re.compile(r"\{([a-z_]+)\}")
 
 
-def _split_template(template):
-    """Split a template on unescaped pipes while preserving escaped literals."""
+def split_template(template):
     parts = [""]
     index = 0
     while index < len(template):
@@ -17,9 +14,9 @@ def _split_template(template):
         if (
             char == "\\"
             and index + 1 < len(template)
-            and template[index + 1] in _ESCAPED
+            and template[index + 1] in ESCAPED
         ):
-            parts[-1] += _ESCAPED[template[index + 1]]
+            parts[-1] += ESCAPED[template[index + 1]]
             index += 2
         elif char == "|":
             parts.append("")
@@ -30,29 +27,26 @@ def _split_template(template):
     return parts
 
 
-def caption_template_fields(template):
-    """Return the placeholder names used in a template, excluding escaped ones."""
+def fields(template):
     return {
         field
-        for part in _split_template(template)
-        for field in _VARIABLE.findall(part)
+        for part in split_template(template)
+        for field in VARIABLE.findall(part)
     }
 
 
-def render_caption_template(template, values):
-    """Render placeholders, then apply each ``|find:replace`` patch in order."""
-
+def render(template, values):
     def interpolate(text):
-        return _VARIABLE.sub(
+        return VARIABLE.sub(
             lambda match: str(values.get(match.group(1), match.group(0))), text
         )
 
     def unescape(text):
-        for escaped, literal in _RESTORE_ESCAPED.items():
+        for escaped, literal in RESTORED.items():
             text = text.replace(escaped, literal)
         return text
 
-    parts = [interpolate(part) for part in _split_template(template)]
+    parts = [interpolate(part) for part in split_template(template)]
     result = unescape(parts[0])
     for patch in parts[1:]:
         if ":" not in patch:

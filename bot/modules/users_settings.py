@@ -88,11 +88,11 @@ async def get_user_settings(from_user, stype="main"):
         else:
             lprefix = "None"
         buttons.data_button(
-            "Leech Captions", f"userset {user_id} menu LEECH_CAPTIONS"
+            "Leech Captions", "userset {} menu LEECH_CAPTIONS".format(user_id)
         )
         leech_caption = user_dict.get("LEECH_CAPTIONS") or "None"
         if len(leech_caption) > 200:
-            leech_caption = f"{leech_caption[:197]}..."
+            leech_caption = leech_caption[:197] + "..."
         if (
             user_dict.get("AS_DOCUMENT", False)
             or "AS_DOCUMENT" not in user_dict

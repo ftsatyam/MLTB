@@ -12,35 +12,33 @@ _MODULE_PATH = (
 _SPEC = spec_from_file_location("caption_utils", _MODULE_PATH)
 _MODULE = module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
-caption_template_fields = _MODULE.caption_template_fields
-render_caption_template = _MODULE.render_caption_template
+fields = _MODULE.fields
+render = _MODULE.render
 
 
-def test_renders_variables_and_applies_patches_in_order():
+def test_render():
     template = "<b>{filename}</b> - {size}|movie:film|film:video"
 
-    assert render_caption_template(
-        template, {"filename": "movie.mkv", "size": "1GB"}
-    ) == "<b>video.mkv</b> - 1GB"
+    assert render(template, {"filename": "movie.mkv", "size": "1GB"}) == (
+        "<b>video.mkv</b> - 1GB"
+    )
 
 
-def test_escaped_pipe_and_braces_are_literals():
+def test_escape():
     template = r"Literal \| and \{filename\}: {filename}"
 
-    assert render_caption_template(template, {"filename": "movie.mkv"}) == (
+    assert render(template, {"filename": "movie.mkv"}) == (
         "Literal | and {filename}: movie.mkv"
     )
 
 
-def test_fields_excludes_escaped_placeholders_and_includes_patch_fields():
+def test_fields():
     template = r"\{filename\} {size}|{filename}:renamed"
 
-    assert caption_template_fields(template) == {"filename", "size"}
+    assert fields(template) == {"filename", "size"}
 
 
-def test_unknown_variables_are_preserved_and_values_may_contain_pipes():
+def test_unknown_and_pipe():
     template = "{unknown} {filename}"
 
-    assert render_caption_template(
-        template, {"filename": "part|one.mkv"}
-    ) == "{unknown} part|one.mkv"
+    assert render(template, {"filename": "part|one.mkv"}) == "{unknown} part|one.mkv"

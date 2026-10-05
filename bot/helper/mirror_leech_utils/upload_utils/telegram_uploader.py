@@ -32,8 +32,8 @@ from ....core.config_manager import Config
 from ....core.telegram_manager import TgClient
 from ...ext_utils.bot_utils import cmd_exec, sync_to_async
 from ...ext_utils.caption_utils import (
-    caption_template_fields,
-    render_caption_template,
+    fields,
+    render,
 )
 from ...ext_utils.files_utils import get_mime_type, is_archive, get_base_name
 from ...ext_utils.status_utils import get_readable_file_size, get_readable_time
@@ -49,7 +49,7 @@ from ...ext_utils.media_utils import (
 LOGGER = getLogger(__name__)
 
 
-def _get_md5(file_path):
+def md5_file(file_path):
     digest = md5()
     with open(file_path, "rb") as file_obj:
         for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
@@ -183,8 +183,8 @@ class TelegramUploader:
             self._up_path = new_path
         return cap_mono
 
-    async def _render_leech_caption(self, template, file_, precaption, size):
-        fields = caption_template_fields(template)
+    async def leech_caption(self, template, file_, precaption, size):
+        used_fields = fields(template)
         values = {
             "filename": ospath.basename(self._up_path),
             "size": get_readable_file_size(size),
@@ -198,7 +198,9 @@ class TelegramUploader:
             "precaption": precaption,
         }
 
-        if fields.intersection({"duration", "quality", "languages", "subtitles"}):
+        if used_fields.intersection(
+            {"duration", "quality", "languages", "subtitles"}
+        ):
             try:
                 result = await cmd_exec(
                     [
@@ -227,7 +229,7 @@ class TelegramUploader:
                         and str(stream.get("height", "")).isdigit()
                     ]
                     if heights:
-                        values["quality"] = f"{max(heights)}p"
+                        values["quality"] = str(max(heights)) + "p"
                     for stream_type, field in (
                         ("audio", "languages"),
                         ("subtitle", "subtitles"),
@@ -247,23 +249,23 @@ class TelegramUploader:
                                 labels.append(label)
                         values[field] = ", ".join(labels)
             except Exception as error:
-                LOGGER.info(f"Could not read caption media metadata: {error}")
+                LOGGER.info("Could not read caption media metadata: {}".format(error))
 
-        if "mime_type" in fields:
+        if "mime_type" in used_fields:
             try:
                 values["mime_type"] = await sync_to_async(
                     get_mime_type, self._up_path
                 )
             except Exception as error:
-                LOGGER.info(f"Could not read caption MIME type: {error}")
+                LOGGER.info("Could not read caption MIME type: {}".format(error))
 
-        if "md5_hash" in fields:
+        if "md5_hash" in used_fields:
             try:
-                values["md5_hash"] = await sync_to_async(_get_md5, self._up_path)
+                values["md5_hash"] = await sync_to_async(md5_file, self._up_path)
             except Exception as error:
-                LOGGER.info(f"Could not calculate caption MD5: {error}")
+                LOGGER.info("Could not calculate caption MD5: {}".format(error))
 
-        return render_caption_template(template, values)
+        return render(template, values)
 
     def _get_input_media(self, subkey, key):
         rlist = []
@@ -356,7 +358,7 @@ class TelegramUploader:
                         return
                     cap_mono = await self._prepare_file(file_, dirpath)
                     if self._lcaption:
-                        cap_mono = await self._render_leech_caption(
+                        cap_mono = await self.leech_caption(
                             self._lcaption, file_, cap_mono, f_size
                         )
                     if self._last_msg_in_group:
