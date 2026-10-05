@@ -347,7 +347,7 @@ class TelegramUploader:
                             f"Total Attempts: {err.last_attempt.attempt_number}"
                         )
                         err = err.last_attempt.exception()
-                    LOGGER.error(f"{err}. Path: {self._up_path}")
+                    LOGGER.exception("%s. Path: %s", err, self._up_path)
                     self._error = str(err)
                     self._corrupted += 1
                     if self._listener.is_cancelled:
