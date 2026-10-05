@@ -1,9 +1,8 @@
 import re
 
 
-ESCAPED = {"|": "\ue000", "{": "\ue001", "}": "\ue002"}
+ESCAPED = {"|": "\ue000", "{": "\ue001", "}": "\ue002", "s": "\ue003"}
 RESTORED = {value: key for key, value in ESCAPED.items()}
-VARIABLE = re.compile(r"\{([a-z_]+)\}")
 
 
 def split_template(template):
@@ -27,33 +26,19 @@ def split_template(template):
     return parts
 
 
-def fields(template):
-    return {
-        field
-        for part in split_template(template)
-        for field in VARIABLE.findall(part)
-    }
-
-
 def render(template, values):
-    def interpolate(text):
-        return VARIABLE.sub(
-            lambda match: str(values.get(match.group(1), match.group(0))), text
-        )
-
-    def unescape(text):
-        for escaped, literal in RESTORED.items():
-            text = text.replace(escaped, literal)
-        return text
-
-    parts = [interpolate(part) for part in split_template(template)]
-    result = unescape(parts[0])
+    parts = split_template(template)
+    parts[0] = re.sub(
+        r"\{([^}]+)\}",
+        lambda match: "{" + match.group(1).lower() + "}",
+        parts[0],
+    )
+    result = parts[0].format(**values)
     for patch in parts[1:]:
-        if ":" not in patch:
-            continue
-        find, replace = patch.split(":", 1)
-        find = unescape(interpolate(find))
-        replace = unescape(interpolate(replace))
-        if find:
-            result = result.replace(find, replace)
+        args = patch.split(":")
+        count = int(args[2]) if len(args) == 3 else -1
+        replacement = args[1] if len(args) > 1 else ""
+        result = result.replace(args[0], replacement, count)
+    for escaped, literal in RESTORED.items():
+        result = result.replace(escaped, " " if literal == "s" else literal)
     return result

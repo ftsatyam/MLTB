@@ -41,7 +41,7 @@ leech_options = [
     "LEECH_SPLIT_SIZE",
     "LEECH_DUMP_CHAT",
     "LEECH_FILENAME_PREFIX",
-    "LEECH_CAPTIONS",
+    "LEECH_CAPTION",
     "THUMBNAIL_LAYOUT",
     "CLONE_DUMP_CHATS",
 ]
@@ -88,9 +88,13 @@ async def get_user_settings(from_user, stype="main"):
         else:
             lprefix = "None"
         buttons.data_button(
-            "Leech Captions", "userset {} menu LEECH_CAPTIONS".format(user_id)
+            "Leech Captions", "userset {} menu LEECH_CAPTION".format(user_id)
         )
-        leech_caption = user_dict.get("LEECH_CAPTIONS") or "None"
+        leech_caption = (
+            user_dict.get("LEECH_CAPTION")
+            or user_dict.get("LEECH_CAPTIONS")
+            or "None"
+        )
         if len(leech_caption) > 200:
             leech_caption = leech_caption[:197] + "..."
         if (
@@ -767,9 +771,13 @@ async def edit_user_settings(client, query):
             await database.update_user_doc(user_id, data[3])
         else:
             update_user_ldata(user_id, data[3], "")
+            if data[3] == "LEECH_CAPTION":
+                user_dict.pop("LEECH_CAPTIONS", None)
             await database.update_user_data(user_id)
     elif data[2] == "reset":
         await query.answer("Reseted!", show_alert=True)
+        if data[3] == "LEECH_CAPTION":
+            user_dict.pop("LEECH_CAPTIONS", None)
         if data[3] in user_dict:
             del user_dict[data[3]]
         else:

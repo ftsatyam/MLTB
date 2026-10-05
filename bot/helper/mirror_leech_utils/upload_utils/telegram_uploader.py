@@ -1,8 +1,6 @@
 from PIL import Image
 from aioshutil import rmtree
 from asyncio import sleep
-from hashlib import md5
-from json import loads
 from logging import getLogger
 from natsort import natsorted
 from os import walk, path as ospath
@@ -30,15 +28,13 @@ from tenacity import (
 from .... import intervals
 from ....core.config_manager import Config
 from ....core.telegram_manager import TgClient
-from ...ext_utils.bot_utils import cmd_exec, sync_to_async
-from ...ext_utils.caption_utils import (
-    fields,
-    render,
-)
-from ...ext_utils.files_utils import get_mime_type, is_archive, get_base_name
+from ...ext_utils.bot_utils import sync_to_async
+from ...ext_utils.caption_utils import render
+from ...ext_utils.files_utils import is_archive, get_base_name
 from ...ext_utils.status_utils import get_readable_file_size, get_readable_time
 from ...telegram_helper.message_utils import delete_message
 from ...ext_utils.media_utils import (
+    get_md5_hash,
     get_media_info,
     get_document_type,
     get_video_thumbnail,
@@ -47,14 +43,6 @@ from ...ext_utils.media_utils import (
 )
 
 LOGGER = getLogger(__name__)
-
-
-def md5_file(file_path):
-    digest = md5()
-    with open(file_path, "rb") as file_obj:
-        for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 class TelegramUploader:
@@ -102,7 +90,11 @@ class TelegramUploader:
             if "LEECH_FILENAME_PREFIX" not in self._listener.user_dict
             else ""
         )
-        self._lcaption = self._listener.user_dict.get("LEECH_CAPTIONS") or ""
+        self._lcaption = (
+            self._listener.user_dict.get("LEECH_CAPTION")
+            or self._listener.user_dict.get("LEECH_CAPTIONS")
+            or ""
+        )
         if self._thumb != "none" and not await aiopath.exists(self._thumb):
             self._thumb = None
         self._files_links = self._listener.user_dict.get("FILES_LINKS", False) or (
@@ -183,88 +175,22 @@ class TelegramUploader:
             self._up_path = new_path
         return cap_mono
 
-    async def leech_caption(self, template, file_, precaption, size):
-        used_fields = fields(template)
+    async def leech_caption(self, template, size):
+        duration, quality, languages, subtitles = await get_media_info(
+            self._up_path, True
+        )
         values = {
             "filename": ospath.basename(self._up_path),
             "size": get_readable_file_size(size),
-            "duration": "",
-            "quality": "",
-            "languages": "",
-            "subtitles": "",
-            "md5_hash": "",
-            "mime_type": "",
-            "prefilename": file_,
-            "precaption": precaption,
+            "duration": get_readable_time(duration),
+            "quality": quality,
+            "languages": languages,
+            "subtitles": subtitles,
+            "md5_hash": await sync_to_async(get_md5_hash, self._up_path),
+            "mime_type": self._listener.file_details.get("mime_type", "text/plain"),
+            "prefilename": self._listener.file_details.get("filename", ""),
+            "precaption": self._listener.file_details.get("caption", "") or "",
         }
-
-        if used_fields.intersection(
-            {"duration", "quality", "languages", "subtitles"}
-        ):
-            try:
-                result = await cmd_exec(
-                    [
-                        "ffprobe",
-                        "-hide_banner",
-                        "-loglevel",
-                        "error",
-                        "-print_format",
-                        "json",
-                        "-show_format",
-                        "-show_streams",
-                        self._up_path,
-                    ]
-                )
-                if result[0] and result[2] == 0:
-                    probe = loads(result[0])
-                    media_format = probe.get("format", {})
-                    duration = round(float(media_format.get("duration", 0)))
-                    if duration:
-                        values["duration"] = get_readable_time(duration) or "0s"
-                    streams = probe.get("streams", [])
-                    heights = [
-                        int(stream["height"])
-                        for stream in streams
-                        if stream.get("codec_type") == "video"
-                        and str(stream.get("height", "")).isdigit()
-                    ]
-                    if heights:
-                        values["quality"] = str(max(heights)) + "p"
-                    for stream_type, field in (
-                        ("audio", "languages"),
-                        ("subtitle", "subtitles"),
-                    ):
-                        labels = []
-                        for stream in streams:
-                            if stream.get("codec_type") != stream_type:
-                                continue
-                            tags = stream.get("tags", {})
-                            label = (
-                                tags.get("language")
-                                or tags.get("LANGUAGE")
-                                or tags.get("title")
-                                or tags.get("TITLE")
-                            )
-                            if label and label not in labels:
-                                labels.append(label)
-                        values[field] = ", ".join(labels)
-            except Exception as error:
-                LOGGER.info("Could not read caption media metadata: {}".format(error))
-
-        if "mime_type" in used_fields:
-            try:
-                values["mime_type"] = await sync_to_async(
-                    get_mime_type, self._up_path
-                )
-            except Exception as error:
-                LOGGER.info("Could not read caption MIME type: {}".format(error))
-
-        if "md5_hash" in used_fields:
-            try:
-                values["md5_hash"] = await sync_to_async(md5_file, self._up_path)
-            except Exception as error:
-                LOGGER.info("Could not calculate caption MD5: {}".format(error))
-
         return render(template, values)
 
     def _get_input_media(self, subkey, key):
@@ -359,7 +285,7 @@ class TelegramUploader:
                     cap_mono = await self._prepare_file(file_, dirpath)
                     if self._lcaption:
                         cap_mono = await self.leech_caption(
-                            self._lcaption, file_, cap_mono, f_size
+                            self._lcaption, f_size
                         )
                     if self._last_msg_in_group:
                         group_lists = [

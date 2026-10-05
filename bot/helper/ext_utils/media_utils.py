@@ -6,6 +6,10 @@ from asyncio import (
     wait_for,
 )
 from asyncio.subprocess import PIPE
+from contextlib import suppress
+from hashlib import md5
+from json import loads
+from langcodes import Language
 from os import path as ospath
 from re import search as re_search, escape
 from time import time
@@ -35,34 +39,79 @@ def ffconcat_escape(path):
     return path.replace("'", r"'\''")
 
 
-async def get_media_info(path):
+def get_md5_hash(path):
+    digest = md5()
+    with open(path, "rb") as file_obj:
+        for chunk in iter(lambda: file_obj.read(4096), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+async def get_media_info(path, extra_info=False):
     try:
-        result = await cmd_exec(
-            [
-                "ffprobe",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-print_format",
-                "json",
-                "-show_format",
-                path,
-            ]
-        )
+        command = [
+            "ffprobe",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-print_format",
+            "json",
+            "-show_format",
+        ]
+        if extra_info:
+            command.append("-show_streams")
+        command.append(path)
+        result = await cmd_exec(command)
     except Exception as e:
-        LOGGER.error(f"Get Media Info: {e}. Mostly File not found! - File: {path}")
-        return 0, None, None
+        LOGGER.error(
+            "Get Media Info: {}. Mostly File not found! - File: {}".format(e, path)
+        )
+        return (0, "", "", "") if extra_info else (0, None, None)
     if result[0] and result[2] == 0:
-        fields = eval(result[0]).get("format")
+        media_info = loads(result[0])
+        fields = media_info.get("format")
         if fields is None:
-            LOGGER.error(f"get_media_info: {result}")
-            return 0, None, None
+            LOGGER.error("get_media_info: {}".format(result))
+            return (0, "", "", "") if extra_info else (0, None, None)
         duration = round(float(fields.get("duration", 0)))
+        if extra_info:
+            quality = ""
+            languages = []
+            subtitles = []
+            streams = media_info.get("streams", [])
+            if streams and streams[0].get("codec_type") == "video":
+                try:
+                    height = int(streams[0].get("height", 0))
+                except (TypeError, ValueError):
+                    height = 0
+                if height:
+                    levels = (480, 540, 720, 1080, 2160, 4320, 8640)
+                    level = next(
+                        (item for item in levels if height <= item), levels[-1]
+                    )
+                    quality = str(level) + "p"
+                for stream in streams:
+                    stream_type = stream.get("codec_type")
+                    tags = stream.get("tags", {})
+                    if stream_type == "audio":
+                        language = tags.get("language")
+                        target = languages
+                    elif stream_type == "subtitle":
+                        language = tags.get("language")
+                        target = subtitles
+                    else:
+                        continue
+                    if language:
+                        with suppress(Exception):
+                            language = Language.get(language).display_name()
+                        if language not in target:
+                            target.append(language)
+            return duration, quality, ", ".join(languages), ", ".join(subtitles)
         tags = fields.get("tags", {})
         artist = tags.get("artist") or tags.get("ARTIST") or tags.get("Artist")
         title = tags.get("title") or tags.get("TITLE") or tags.get("Title")
         return duration, artist, title
-    return 0, None, None
+    return (0, "", "", "") if extra_info else (0, None, None)
 
 
 async def get_document_type(path):
