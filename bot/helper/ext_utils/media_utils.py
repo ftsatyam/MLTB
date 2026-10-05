@@ -1,4 +1,5 @@
 from PIL import Image
+from aiofiles import open as aiopen
 from aiofiles.os import remove, path as aiopath, makedirs
 from asyncio import (
     create_subprocess_exec,
@@ -10,6 +11,7 @@ from contextlib import suppress
 from hashlib import md5
 from json import loads
 from langcodes import Language
+from httpx import AsyncClient
 from os import path as ospath
 from re import search as re_search, escape
 from time import time
@@ -30,8 +32,48 @@ async def create_thumb(msg, _id=""):
     await makedirs(path, exist_ok=True)
     photo_dir = await msg.download()
     output = ospath.join(path, f"{_id}.jpg")
-    await sync_to_async(Image.open(photo_dir).convert("RGB").save, output, "JPEG")
+    await sync_to_async(convert_thumb, photo_dir, output)
     await remove(photo_dir)
+    return output
+
+
+def convert_thumb(source, output):
+    with Image.open(source) as image:
+        image.thumbnail((320, 320))
+        image = image.convert("RGB")
+        for quality in (95, 90, 85, 80, 75, 70, 60, 50, 40, 30, 20):
+            image.save(output, "JPEG", quality=quality, optimize=True)
+            if ospath.getsize(output) <= 204800:
+                break
+
+
+async def download_thumb(url):
+    thumb_dir = ospath.join(DOWNLOAD_DIR, "thumbnails")
+    await makedirs(thumb_dir, exist_ok=True)
+    output = ospath.join(thumb_dir, "{}.jpg".format(int(time() * 1000000)))
+    temp = output + ".download"
+    try:
+        async with AsyncClient(follow_redirects=True, timeout=30) as client:
+            async with client.stream("GET", url) as response:
+                response.raise_for_status()
+                content_size = response.headers.get("content-length", "")
+                if content_size.isdigit() and int(content_size) > 20971520:
+                    raise ValueError("Thumbnail image exceeds 20 MB")
+                size = 0
+                async with aiopen(temp, "wb") as file_obj:
+                    async for chunk in response.aiter_bytes(65536):
+                        size += len(chunk)
+                        if size > 20971520:
+                            raise ValueError("Thumbnail image exceeds 20 MB")
+                        await file_obj.write(chunk)
+        await sync_to_async(convert_thumb, temp, output)
+    except Exception:
+        if await aiopath.exists(temp):
+            await remove(temp)
+        if await aiopath.exists(output):
+            await remove(output)
+        raise
+    await remove(temp)
     return output
 
 

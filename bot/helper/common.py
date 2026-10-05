@@ -51,6 +51,7 @@ from .ext_utils.links_utils import (
 )
 from .ext_utils.media_utils import (
     create_thumb,
+    download_thumb,
     take_ss,
     get_document_type,
     FFMpeg,
@@ -581,6 +582,8 @@ class TaskConfig:
                 self.thumb = (
                     await create_thumb(msg) if msg.photo or msg.document else ""
                 )
+            elif self.thumb.startswith(("http://", "https://")):
+                self.thumb = await download_thumb(self.thumb)
 
     async def get_tag(self, text: list):
         if self.user:
