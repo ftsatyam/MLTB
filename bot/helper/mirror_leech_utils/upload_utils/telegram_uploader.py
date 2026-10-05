@@ -176,6 +176,7 @@ class TelegramUploader:
         return cap_mono
 
     async def leech_caption(self, template, size):
+        template = str(template)
         duration, quality, languages, subtitles = await get_media_info(
             self._up_path, True
         )
